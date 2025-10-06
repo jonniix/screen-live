@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Screen Live 24/7 — WHIP (publish) / WHEP (view)</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body{background:#0b0e13;color:#e8eef6}
+    .card{background:#121824;border:1px solid #1b2430;border-radius:14px}
+    .input{background:#0f1624;border:1px solid #2a3550;border-radius:10px;padding:.6rem .75rem}
+    .btn{border:1px solid #2a3550;background:#1a2233;border-radius:10px;padding:.6rem .9rem;font-weight:600}
+    .btn:hover{background:#22304a}
+    .tag{display:inline-flex;align-items:center;gap:.4rem;padding:.25rem .6rem;border-radius:999px;border:1px solid #2a3550;background:#0f1624;font-size:.8rem}
+    .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace}
+    video{background:#000;border:1px solid #2a3550;border-radius:10px}
+  </style>
+</head>
+<body class="min-h-screen">
+  <header class="p-4 border-b border-[#1b2430]">
+    <div class="max-w-6xl mx-auto flex items-center justify-between gap-4">
+      <div>
+        <h1 class="text-xl font-semibold">Screen Live 24/7</h1>
+        <p class="text-sm opacity-80">Un solo HTML per <b>trasmettere</b> lo schermo via <b>WHIP</b> e per <b>guardare</b> via <b>WHEP</b>. Genera anche il <b>deeplink</b> per la tua app.</p>
+      </div>
+      <div class="flex gap-2">
+        <span class="tag">HTTPS</span>
+        <span class="tag">Standard IETF</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-6xl mx-auto p-4 space-y-6">
+    <section class="card p-4">
+      <div class="flex flex-wrap items-center gap-2 mb-3">
+        <button id="tabPub" class="btn">Publish (WHIP)</button>
+        <button id="tabView" class="btn">View (WHEP)</button>
+        <span class="tag">ICE/STUN auto</span>
+      </div>
+
+      <!-- PUBLISHER -->
+      <div id="pub" class="grid md:grid-cols-2 gap-4">
+        <div class="space-y-3">
+          <label class="block text-sm">WHIP URL (ingest)
+            <input id="whipUrl" class="input w-full mt-1 mono" placeholder="https://SERVER/whip/streamKey" />
+          </label>
+          <label class="block text-sm">Authorization (opzionale)
+            <input id="whipAuth" class="input w-full mt-1 mono" placeholder="es. Bearer abc123" />
+          </label>
+          <div class="grid grid-cols-2 gap-2">
+            <button id="btnShare" class="btn">Condividi schermo ➜ Pubblica</button>
+            <button id="btnStop" class="btn" disabled>Stop</button>
+          </div>
+          <div class="text-xs opacity-80">Suggerimenti H24: usa un dispositivo always-on (Android TV / miniPC / Raspberry in kiosk). Su smartphone Android assicurati di disattivare le ottimizzazioni batteria e mantieni lo schermo attivo.</div>
+          <div class="text-sm">Stato: <span id="pubState" class="mono">—</span></div>
+          <div class="text-sm">Resource URL: <span id="pubRes" class="mono break-all">—</span></div>
+        </div>
+        <div class="space-y-2">
+          <video id="prev" class="w-full aspect-video" autoplay muted playsinline></video>
+          <div class="grid sm:grid-cols-2 gap-2">
+            <label class="block text-sm">Label (pubblica)
+              <input id="labelPub" class="input w-full mt-1" placeholder="es. Resinelli Castione" />
+            </label>
+            <label class="block text-sm">WHEP URL (viewer)
+              <input id="whepUrlShare" class="input w-full mt-1 mono" placeholder="https://SERVER/whep/streamKey" />
+            </label>
+          </div>
+          <div class="grid sm:grid-cols-2 gap-2">
+            <button id="btnBuildDeeplink" class="btn">Crea Deeplink per la tua app</button>
+            <input id="deeplinkOut" class="input w-full mono" readonly />
+          </div>
+        </div>
+      </div>
+
+      <!-- VIEWER -->
+      <div id="view" class="grid md:grid-cols-2 gap-4 hidden">
+        <div class="space-y-3">
+          <label class="block text-sm">WHEP URL
+            <input id="whepUrl" class="input w-full mt-1 mono" placeholder="https://SERVER/whep/streamKey" />
+          </label>
+          <label class="block text-sm">Authorization (opzionale)
+            <input id="whepAuth" class="input w-full mt-1 mono" placeholder="es. Bearer abc123" />
+          </label>
+          <div class="grid grid-cols-2 gap-2">
+            <button id="btnView" class="btn">Guarda</button>
+            <button id="btnHang" class="btn" disabled>Chiudi</button>
+          </div>
+          <div class="text-sm">Stato: <span id="viewState" class="mono">—</span></div>
+        </div>
+        <div class="space-y-2">
+          <video id="remote" class="w-full aspect-video" autoplay playsinline controls></video>
+          <div class="grid sm:grid-cols-2 gap-2">
+            <label class="block text-sm">Label (facoltativa)
+              <input id="labelView" class="input w-full mt-1" placeholder="es. Resinelli Castione" />
+            </label>
+            <div class="text-sm opacity-80">Il viewer usa <span class="mono">recvonly</span> video (audio disabilitato di default). Adatta a monitoraggio schermo.</div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const $ = s=>document.querySelector(s);
+
+    // ---- Tabs
+    $('#tabPub').onclick = ()=>{ $('#pub').classList.remove('hidden'); $('#view').classList.add('hidden'); };
+    $('#tabView').onclick = ()=>{ $('#view').classList.remove('hidden'); $('#pub').classList.add('hidden'); };
+
+    // ---- Wake Lock (mantieni schermo acceso durante la pubblicazione)
+    let wakeLock = null;
+    async function keepAwake(on){ try{ if(on){ wakeLock = await navigator.wakeLock?.request?.('screen'); } else { await wakeLock?.release?.(); wakeLock=null; } }catch{} }
+
+    // ---- Helpers
+    function iceComplete(pc){
+      return new Promise(res=>{
+        if(pc.iceGatheringState==='complete') return res();
+        const t = setTimeout(()=>{ pc.removeEventListener('icegatheringstatechange', onchg); res(); }, 8000);
+        function onchg(){ if(pc.iceGatheringState==='complete'){ clearTimeout(t); pc.removeEventListener('icegatheringstatechange', onchg); res(); } }
+        pc.addEventListener('icegatheringstatechange', onchg);
+      });
+    }
+    function hdrs(auth){
+      const h = { 'Content-Type':'application/sdp' };
+      if(auth && auth.trim()) h['Authorization'] = auth.trim();
+      return h;
+    }
+
+    // ======================= PUBLISH (WHIP) =======================
+    let pub = { pc:null, stream:null, resource:"", abort:null };
+
+    $('#btnShare').onclick = async ()=>{
+      const url = $('#whipUrl').value.trim();
+      if(!url) return alert('Inserisci il WHIP URL');
+      if(pub.pc) return;
+      $('#pubState').textContent = 'preparing...';
+      try{
+        await keepAwake(true);
+        pub.stream = await navigator.mediaDevices.getDisplayMedia({ video:{ frameRate:30 }, audio:false });
+        $('#prev').srcObject = pub.stream;
+
+        pub.pc = new RTCPeerConnection({ iceServers:[{urls:'stun:stun.l.google.com:19302'}] });
+        pub.stream.getTracks().forEach(t=> pub.pc.addTrack(t, pub.stream));
+        pub.pc.onconnectionstatechange = ()=> $('#pubState').textContent = pub.pc.connectionState;
+
+        const offer = await pub.pc.createOffer();
+        await pub.pc.setLocalDescription(offer);
+        await iceComplete(pub.pc);
+
+        const resp = await fetch(url, { method:'POST', headers: hdrs($('#whipAuth').value), body: pub.pc.localDescription.sdp });
+        if(!resp.ok && resp.status!==201) throw new Error('WHIP POST failed: '+resp.status);
+        const answerSdp = await resp.text();
+        await pub.pc.setRemoteDescription({ type:'answer', sdp: answerSdp });
+
+        pub.resource = resp.headers.get('Location') || '';
+        $('#pubRes').textContent = pub.resource || '—';
+        $('#btnShare').disabled = true; $('#btnStop').disabled = false;
+      }catch(e){
+        $('#pubState').textContent = 'error'; alert(e.message||e);
+        await doStop();
+      }
+    };
+
+    async function doStop(){
+      try{
+        if(pub.resource){ try{ await fetch(pub.resource, { method:'DELETE', headers: hdrs($('#whipAuth').value) }); }catch{} }
+        if(pub.pc){ try{ pub.pc.getSenders().forEach(s=>s.track?.stop?.()); pub.pc.close(); }catch{} }
+      }finally{
+        pub = { pc:null, stream:null, resource:"", abort:null };
+        $('#prev').srcObject = null;
+        $('#btnShare').disabled = false; $('#btnStop').disabled = true;
+        $('#pubState').textContent = 'stopped';
+        await keepAwake(false);
+      }
+    }
+    $('#btnStop').onclick = doStop;
+
+    // Deeplink per la tua app (apre il viewer WHEP integrato)
+    $('#btnBuildDeeplink').onclick = ()=>{
+      const base = `${location.origin}${location.pathname}`; // la tua app può essere questa stessa pagina o un'altra
+      const whep = $('#whepUrlShare').value.trim();
+      const label= $('#labelPub').value.trim();
+      if(!whep) return alert('Inserisci il WHEP URL per il viewer');
+      const qs = new URLSearchParams({ provider:'whep', url: whep });
+      if(label) qs.set('label', label);
+      $('#deeplinkOut').value = `${base}?${qs.toString()}#home`;
+      navigator.clipboard.writeText($('#deeplinkOut').value).catch(()=>{});
+    };
+
+    // ======================= VIEW (WHEP) =======================
+    let view = { pc:null, resource:"" };
+
+    async function startView(){
+      const url = $('#whepUrl').value.trim(); if(!url) return alert('Inserisci il WHEP URL');
+      if(view.pc) return;
+      $('#viewState').textContent = 'preparing...';
+      try{
+        view.pc = new RTCPeerConnection({ iceServers:[{urls:'stun:stun.l.google.com:19302'}] });
+        view.pc.onconnectionstatechange = ()=> $('#viewState').textContent = view.pc.connectionState;
+        view.pc.addTransceiver('video', { direction:'recvonly' });
+        // se serve anche audio, scommenta:
+        // view.pc.addTransceiver('audio', { direction:'recvonly' });
+        view.pc.ontrack = ev => {
+          const ms = ev.streams?.[0] || new MediaStream([ev.track]);
+          $('#remote').srcObject = ms;
+        };
+        const offer = await view.pc.createOffer();
+        await view.pc.setLocalDescription(offer);
+        await iceComplete(view.pc);
+
+        const resp = await fetch(url, { method:'POST', headers: hdrs($('#whepAuth').value), body: view.pc.localDescription.sdp });
+        if(!resp.ok && resp.status!==201) throw new Error('WHEP POST failed: '+resp.status);
+        const answerSdp = await resp.text();
+        await view.pc.setRemoteDescription({ type:'answer', sdp: answerSdp });
+        view.resource = resp.headers.get('Location') || '';
+        $('#btnView').disabled = true; $('#btnHang').disabled = false;
+      }catch(e){
+        $('#viewState').textContent = 'error'; alert(e.message||e);
+        await stopView();
+      }
+    }
+
+    async function stopView(){
+      try{
+        if(view.resource){ try{ await fetch(view.resource, { method:'DELETE', headers: hdrs($('#whepAuth').value) }); }catch{} }
+        if(view.pc){ try{ view.pc.getReceivers().forEach(r=>r.track?.stop?.()); view.pc.close(); }catch{} }
+      }finally{
+        view = { pc:null, resource:"" };
+        $('#remote').srcObject = null;
+        $('#btnView').disabled = false; $('#btnHang').disabled = true;
+        $('#viewState').textContent = 'stopped';
+      }
+    }
+
+    $('#btnView').onclick = startView;
+    $('#btnHang').onclick = stopView;
+
+    // ======================= AUTO-DEEPLINK =======================
+    (function applyDeeplink(){
+      try{
+        const u = new URL(location.href);
+        const p = u.searchParams; const provider = p.get('provider');
+        if(provider==='whep'){
+          $('#tabView').click();
+          const url = p.get('url'); const label = p.get('label');
+          if(url) $('#whepUrl').value = url;
+          if(label) $('#labelView').value = label;
+          // avvia direttamente
+          startView();
+        }
+      }catch{}
+    })();
+  </script>
+</body>
+</html>
